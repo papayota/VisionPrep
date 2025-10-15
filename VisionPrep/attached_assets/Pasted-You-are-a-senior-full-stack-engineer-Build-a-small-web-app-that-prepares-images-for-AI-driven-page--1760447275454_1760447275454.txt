@@ -1,0 +1,106 @@
+You are a senior full-stack engineer. Build a small web app that prepares images for AI-driven page building (vibe-coding). The goal is to make images easy for an AI to place “in the right spot” with high-quality ALT text.
+
+## Core requirements
+- Batch limit: process up to 10 images per run.
+- Inputs per run (from sidebar UI):
+  1) Language selector: `ja` or `en`
+  2) SEO keywords (comma-separated, optional)
+  3) Tone (optional): `neutral | friendly | professional` (default: neutral)
+- For each image, generate:
+  - `alt`: SEO-friendly, concise. Max 120 chars in Japanese / max 140 chars in English.
+  - `keywords_used`: which SEO keywords (0–2) were naturally inserted (array of strings).
+  - `tags`: up to 10 content tags (array of strings).
+  - `placement_hint`: exactly one from this fixed set:
+    `["hero","how-it-works","feature","sidebar","cta-near","gallery"]`
+- Return STRICT JSON per item using the schema below. If the model returns non-JSON, automatically re-prompt once with “JSON only”.
+
+## JSON schema (server-side must validate)
+Item schema:
+{
+  "filename": string,
+  "sha256": string,
+  "metrics": { "width": number, "height": number, "bytes": number },
+  "result": {
+    "alt": string,                 // <=120 ja / <=140 en
+    "keywords_used": string[],     // 0..2 items taken from user’s SEO keywords (only when natural)
+    "tags": string[],              // up to 10
+    "placement_hint": "hero" | "how-it-works" | "feature" | "sidebar" | "cta-near" | "gallery"
+  }
+}
+
+Top-level response (for the batch):
+{
+  "generated_at": ISODateString,
+  "lang": "ja" | "en",
+  "items": Item[]
+}
+
+Validation rules:
+- If `alt` exceeds max length, trim without breaking words (prefer full-width safe trimming for ja).
+- If keywords cannot be inserted naturally, `keywords_used` can be [].
+- `tags.length <= 10`.
+- `placement_hint` must be one of the fixed options.
+
+## Model & prompting
+- Use OpenAI’s vision-capable model (e.g., `gpt-4o-mini`).
+- System prompt (server): “You generate SEO-friendly ALT text and layout hints from images. Return STRICT JSON only that conforms to the given schema. Avoid uncertain guesses (no private attributes). Use user-provided keywords only when natural.”
+- User prompt (per image): include:
+  - language code,
+  - the optional SEO keywords list,
+  - tone,
+  - the image (URL or base64),
+  - the required JSON format and constraints.
+- If the first response isn’t valid JSON or violates schema, retry once with a short corrective prompt (“JSON only, conform to schema”).
+
+## UX / UI (Vite + React)
+- Dropzone (drag & drop) or file picker with hard limit of 10 images per run.
+- For each selected image, show a card with:
+  - thumbnail, filename, width×height, bytes,
+  - status: queued → processing → done / failed,
+  - result fields (`alt`, `keywords_used`, `tags`, `placement_hint`),
+  - “Copy” and “Regenerate (this image only)” buttons.
+- Global controls:
+  - sidebar with Language / SEO keywords / Tone,
+  - “Generate” button, “Cancel” (clears queue),
+  - progress indicator (e.g., 3/10),
+  - “Download CSV” and “Download JSON”.
+- CSV columns: `filename, lang, alt, keywords_used, tags, placement_hint, width, height, bytes, sha256`
+  - `keywords_used` and `tags` are comma-joined in CSV.
+
+## Concurrency & reliability
+- Process 2–3 images in parallel (configurable).
+- Each image has a 30s timeout; on failure, exponential backoff retry up to 2 times.
+- Compute `sha256` of the file content; if the same file is re-uploaded, allow skipping or overwrite.
+- Keep all processing client-visible; show errors inline per image.
+
+## Architecture
+- Frontend: Vite + React + TypeScript (clean components: Dropzone, Sidebar, ItemCard, ResultsTable).
+- Backend: one minimal HTTP function (Node/Express or a single serverless function).
+  - `POST /api/generate` accepts: base64 or data URL(s), lang, tone, keywords[].
+  - For each image: call OpenAI, validate JSON against schema, return batch JSON.
+  - DO NOT expose API keys in the client; read `OPENAI_API_KEY` from server env.
+- Deploy: Replit (or Netlify/Vercel). If Replit, use Replit Secrets for the API key.
+
+## Security & privacy
+- Do not store images or results server-side by default.
+- Process in-memory or temporary storage only.
+- Avoid identifying individuals from photos (no attributes). Keep alt text generic when people are present.
+
+## Acceptance criteria
+- Can upload up to 10 images, choose `ja|en`, enter optional SEO keywords (comma-separated).
+- On “Generate”, all images are processed with 2–3 concurrency; progress updates.
+- Valid JSON results with schema enforcement; non-conforming outputs are retried once.
+- CSV and JSON downloads work and contain the specified fields.
+- `placement_hint` is always one of the fixed values.
+- `alt` length limit enforced by language.
+- Keywords are only included when they read naturally (0–2 max).
+- Simple, clean UI; no console errors; TypeScript passes.
+
+## Nice to have (if time allows)
+- Debounced image dimension/bytes extraction before upload finish.
+- Toggle to skip already-processed sha256 files.
+- Language toggle that regenerates all results.
+- Unit tests for schema validation.
+
+Build this end-to-end and provide the full project structure with working code. 
+Explain setup steps (install, dev, build, run) and where to put the OPENAI_API_KEY. 
