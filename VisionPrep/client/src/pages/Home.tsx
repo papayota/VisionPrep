@@ -14,6 +14,7 @@ import { saveToHistory, getProcessedSHA256s } from "@/lib/historyStorage";
 import type { ProcessingImage, Language, Tone } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { UPLOAD_LIMITS, enforceUploadLimits } from "@/lib/uploadLimits";
 
 export default function Home() {
   const [images, setImages] = useState<ProcessingImage[]>([]);
@@ -26,11 +27,38 @@ export default function Home() {
   const { toast } = useToast();
 
   const handleFilesAdded = useCallback(async (files: File[]) => {
+    const { acceptedFiles, oversizedFiles, extraFilesIgnored } = enforceUploadLimits(
+      files,
+      images.length
+    );
+
+    oversizedFiles.forEach((file) => {
+      toast({
+        title: "File skipped",
+        description: `${file.name} is larger than ${UPLOAD_LIMITS.MAX_FILE_MB} MB and was skipped.`,
+      });
+    });
+
+    if (extraFilesIgnored) {
+      toast({
+        title: "Upload limit reached",
+        description: `Only ${UPLOAD_LIMITS.MAX_FILES} images per batch are allowed. Extra files were ignored.`,
+      });
+    }
+
+    if (acceptedFiles.length === 0) {
+      toast({
+        title: "No valid images to process",
+        description: `Please choose files under ${UPLOAD_LIMITS.MAX_FILE_MB} MB (max ${UPLOAD_LIMITS.MAX_FILES} images).`,
+      });
+      return;
+    }
+
     const newImages: ProcessingImage[] = [];
     const processedSHA256s = skipDuplicates ? getProcessedSHA256s() : new Set<string>();
     let skippedCount = 0;
 
-    for (const file of files) {
+    for (const file of acceptedFiles) {
       try {
         const [sha256, metrics, dataUrl] = await Promise.all([
           calculateSHA256(file),
@@ -69,7 +97,7 @@ export default function Home() {
     }
 
     setImages((prev) => [...prev, ...newImages]);
-  }, [toast, skipDuplicates]);
+  }, [toast, skipDuplicates, images.length]);
 
   const handleGenerate = async () => {
     const queuedImages = images.filter(
@@ -409,7 +437,7 @@ export default function Home() {
             <ImageDropzone
               onFilesAdded={handleFilesAdded}
               currentCount={images.length}
-              maxImages={10}
+              maxImages={UPLOAD_LIMITS.MAX_FILES}
             />
 
             {images.length > 0 && (

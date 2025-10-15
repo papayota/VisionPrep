@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { useDropzone } from "react-dropzone";
 import { Upload, Image as ImageIcon } from "lucide-react";
+import { UPLOAD_LIMITS } from "@/lib/uploadLimits";
 
 interface ImageDropzoneProps {
   onFilesAdded: (files: File[]) => void;
@@ -15,13 +16,11 @@ export function ImageDropzone({
 }: ImageDropzoneProps) {
   const onDrop = useCallback(
     (acceptedFiles: File[]) => {
-      const remaining = maxImages - currentCount;
-      const filesToAdd = acceptedFiles.slice(0, remaining);
-      if (filesToAdd.length > 0) {
-        onFilesAdded(filesToAdd);
+      if (acceptedFiles.length > 0) {
+        onFilesAdded(acceptedFiles);
       }
     },
-    [onFilesAdded, currentCount, maxImages]
+    [onFilesAdded]
   );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -29,7 +28,6 @@ export function ImageDropzone({
     accept: {
       "image/*": [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"],
     },
-    maxFiles: maxImages - currentCount,
     disabled: currentCount >= maxImages,
   });
 
@@ -69,6 +67,9 @@ export function ImageDropzone({
             {currentCount >= maxImages
               ? `Maximum ${maxImages} images reached`
               : `Upload up to ${maxImages - currentCount} more image${maxImages - currentCount === 1 ? "" : "s"}`}
+          </p>
+          <p className="text-xs text-muted-foreground" data-testid="upload-limits-helper">
+            You can upload up to {maxImages} images. Max {UPLOAD_LIMITS.MAX_FILE_MB} MB per image.
           </p>
         </div>
 
