@@ -69,7 +69,8 @@ export function ImageDropzone({
               : `Upload up to ${maxImages - currentCount} more image${maxImages - currentCount === 1 ? "" : "s"}`}
           </p>
           <p className="text-xs text-muted-foreground" data-testid="upload-limits-helper">
-            You can upload up to {maxImages} images. Max {UPLOAD_LIMITS.MAX_FILE_MB} MB per image.
+            You can upload up to {maxImages} images. Max {UPLOAD_LIMITS.MAX_FILE_MB} MB per image
+            ({UPLOAD_LIMITS.MAX_TOTAL_MB} MB per batch).
           </p>
         </div>
 

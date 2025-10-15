@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { enforceUploadLimits, UPLOAD_LIMITS, MAX_FILE_BYTES } from "./uploadLimits";
+import {
+  enforceUploadLimits,
+  UPLOAD_LIMITS,
+  MAX_FILE_BYTES,
+  MAX_TOTAL_BYTES,
+} from "./uploadLimits";
 
 const createFile = (size: number, name: string) =>
   new File([new Uint8Array(size)], name, { type: "image/png" });
@@ -10,7 +15,7 @@ describe("enforceUploadLimits", () => {
       createFile(1024, `image-${index}.png`)
     );
 
-    const result = enforceUploadLimits(files, 0);
+    const result = enforceUploadLimits(files, 0, 0);
 
     expect(result.acceptedFiles).toHaveLength(UPLOAD_LIMITS.MAX_FILES);
     expect(result.acceptedFiles[0]?.name).toBe("image-0.png");
@@ -25,7 +30,7 @@ describe("enforceUploadLimits", () => {
     const largeFile = createFile(MAX_FILE_BYTES + 1, "large.png");
     const smallFile = createFile(1024, "small.png");
 
-    const result = enforceUploadLimits([smallFile, largeFile], 0);
+    const result = enforceUploadLimits([smallFile, largeFile], 0, 0);
 
     expect(result.acceptedFiles).toHaveLength(1);
     expect(result.acceptedFiles[0]?.name).toBe("small.png");
@@ -39,10 +44,19 @@ describe("enforceUploadLimits", () => {
       createFile(MAX_FILE_BYTES + 1, "too-big-2.png"),
     ];
 
-    const result = enforceUploadLimits(oversizedFiles, 0);
+    const result = enforceUploadLimits(oversizedFiles, 0, 0);
 
     expect(result.acceptedFiles).toHaveLength(0);
     expect(result.oversizedFiles).toHaveLength(2);
     expect(result.extraFilesIgnored).toBe(false);
+  });
+  it("prevents exceeding the total batch size", () => {
+    const nearLimit = MAX_TOTAL_BYTES - 512;
+    const overflowFile = createFile(2048, "overflow.png");
+
+    const result = enforceUploadLimits([overflowFile], 0, nearLimit);
+
+    expect(result.acceptedFiles).toHaveLength(0);
+    expect(result.totalSizeExceeded).toBe(true);
   });
 });
