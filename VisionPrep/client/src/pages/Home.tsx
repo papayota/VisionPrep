@@ -14,7 +14,35 @@ import { saveToHistory, getProcessedSHA256s } from "@/lib/historyStorage";
 import type { ProcessingImage, Language, Tone } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { UPLOAD_LIMITS, enforceUploadLimits } from "@/lib/uploadLimits";
+import {
+  UPLOAD_LIMITS,
+  enforceUploadLimits,
+  MAX_TOTAL_BYTES,
+  estimateBatchBytesFromDataUrls,
+} from "@/lib/uploadLimits";
+
+interface ApiError extends Error {
+  status?: number;
+  hint?: string;
+  code?: string;
+}
+
+function getFriendlyErrorMessage(error: ApiError): string {
+  const hint = error.hint ? ` ${error.hint}` : "";
+
+  switch (error.status) {
+    case 413:
+      return `File or total size exceeds the upload limit (max ${UPLOAD_LIMITS.MAX_TOTAL_MB} MB total).${hint}`.trim();
+    case 422:
+      return "We couldn't process the request. Check your inputs and try again.";
+    case 500:
+    case 502:
+    case 503:
+      return "The server encountered a problem while processing your images. Please try again.";
+    default:
+      return (error.message || "An error occurred during processing") + hint;
+  }
+}
 
 export default function Home() {
   const [images, setImages] = useState<ProcessingImage[]>([]);
@@ -27,9 +55,11 @@ export default function Home() {
   const { toast } = useToast();
 
   const handleFilesAdded = useCallback(async (files: File[]) => {
-    const { acceptedFiles, oversizedFiles, extraFilesIgnored } = enforceUploadLimits(
+    const currentTotalBytes = images.reduce((total, image) => total + image.file.size, 0);
+    const { acceptedFiles, oversizedFiles, extraFilesIgnored, totalSizeExceeded } = enforceUploadLimits(
       files,
-      images.length
+      images.length,
+      currentTotalBytes
     );
 
     oversizedFiles.forEach((file) => {
@@ -46,10 +76,18 @@ export default function Home() {
       });
     }
 
+    if (totalSizeExceeded) {
+      toast({
+        title: "Batch too large",
+        description: `Adding these files would exceed the ${UPLOAD_LIMITS.MAX_TOTAL_MB} MB batch limit. Some files were skipped.`,
+        variant: "destructive",
+      });
+    }
+
     if (acceptedFiles.length === 0) {
       toast({
         title: "No valid images to process",
-        description: `Please choose files under ${UPLOAD_LIMITS.MAX_FILE_MB} MB (max ${UPLOAD_LIMITS.MAX_FILES} images).`,
+        description: `Please choose files under ${UPLOAD_LIMITS.MAX_FILE_MB} MB (max ${UPLOAD_LIMITS.MAX_FILES} images, ${UPLOAD_LIMITS.MAX_TOTAL_MB} MB total).`,
       });
       return;
     }
@@ -97,7 +135,7 @@ export default function Home() {
     }
 
     setImages((prev) => [...prev, ...newImages]);
-  }, [toast, skipDuplicates, images.length]);
+  }, [toast, skipDuplicates, images]);
 
   const handleGenerate = async () => {
     const queuedImages = images.filter(
@@ -112,12 +150,25 @@ export default function Home() {
       return;
     }
 
-    setIsProcessing(true);
-
     const keywordList = keywords
       .split(",")
       .map((k) => k.trim())
       .filter(Boolean);
+
+    const totalBatchBytes = estimateBatchBytesFromDataUrls(
+      queuedImages.map((img) => img.dataUrl)
+    );
+
+    if (totalBatchBytes > MAX_TOTAL_BYTES) {
+      toast({
+        title: "Batch too large",
+        description: `The selected images exceed the ${UPLOAD_LIMITS.MAX_TOTAL_MB} MB batch limit. Remove some images and try again.`,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsProcessing(true);
 
     const requestData = {
       images: queuedImages.map((img) => ({
@@ -170,6 +221,9 @@ export default function Home() {
         description: `Successfully processed ${response.items.length} image${response.items.length === 1 ? "" : "s"}`,
       });
     } catch (error: any) {
+      const apiError = error as ApiError;
+      const friendlyMessage = getFriendlyErrorMessage(apiError);
+
       queuedImages.forEach((img) => {
         setImages((prev) =>
           prev.map((i) =>
@@ -177,7 +231,7 @@ export default function Home() {
               ? {
                   ...i,
                   status: "failed" as const,
-                  error: error.message || "Processing failed",
+                  error: friendlyMessage,
                 }
               : i
           )
@@ -186,7 +240,7 @@ export default function Home() {
 
       toast({
         title: "Processing failed",
-        description: error.message || "An error occurred during processing",
+        description: friendlyMessage,
         variant: "destructive",
       });
     } finally {
